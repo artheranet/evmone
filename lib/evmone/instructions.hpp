@@ -986,7 +986,6 @@ inline StopToken returncontract(StackTop stack, ExecutionState& state, code_iter
         header.container_size(deploy_container_index)};
 
     // Append (offset, size) to data section
-    const auto deploy_header = read_valid_eof1_header(deploy_container);
     append_data_section(
         deploy_container, {&state.memory[static_cast<size_t>(offset)], static_cast<size_t>(size)});
 
