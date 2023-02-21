@@ -647,13 +647,17 @@ EOF1Header read_valid_eof1_header(bytes_view container)
     return header;
 }
 
-void append_data_section(bytes& container, bytes_view aux_data)
+bool append_data_section(bytes& container, bytes_view aux_data)
 {
     const auto header = read_valid_eof1_header(container);
+    const auto new_data_size = header.data_size + aux_data.size();
+    if (new_data_size > std::numeric_limits<uint16_t>::max())
+        return false;
+
+    // Insert position is before first embedded container, or at the end if there're none.
     const auto insert_pos =
         header.container_offsets.empty() ? container.size() : header.container_begin(0);
     container.insert(insert_pos, aux_data);
-    const auto new_data_size = header.data_size + aux_data.size();
 
     // find data size position
     const auto num_code_sections = header.code_sizes.size();
@@ -661,6 +665,7 @@ void append_data_section(bytes& container, bytes_view aux_data)
     // Update data size
     container[data_size_pos] = static_cast<uint8_t>(new_data_size >> 8);
     container[data_size_pos + 1] = static_cast<uint8_t>(new_data_size);
+    return true;
 }
 
 uint8_t get_eof_version(bytes_view container) noexcept

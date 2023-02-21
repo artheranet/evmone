@@ -986,8 +986,9 @@ inline StopToken returncontract(StackTop stack, ExecutionState& state, code_iter
         header.container_size(deploy_container_index)};
 
     // Append (offset, size) to data section
-    append_data_section(
-        deploy_container, {&state.memory[static_cast<size_t>(offset)], static_cast<size_t>(size)});
+    if (!append_data_section(deploy_container,
+            {&state.memory[static_cast<size_t>(offset)], static_cast<size_t>(size)}))
+        return {EVMC_OUT_OF_GAS};
 
     state.deploy_container = std::move(deploy_container);
 

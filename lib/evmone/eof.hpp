@@ -61,7 +61,7 @@ struct EOF1Header
 
 /// Modifies container by appending aux_data to data section and updating data section size
 /// in the header.
-void append_data_section(bytes& container, bytes_view aux_data);
+bool append_data_section(bytes& container, bytes_view aux_data);
 
 enum class EOFValidationError
 {
