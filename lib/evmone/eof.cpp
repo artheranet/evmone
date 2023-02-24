@@ -508,9 +508,17 @@ std::variant<EOF1Header, EOFValidationError> validate_eof1(
         offset += code_size;
     }
 
-    // TODO calculate container offsets and add to EOF1Header
+    offset += data_size;
+    const auto& container_sizes = section_headers[CONTAINER_SECTION];
+    std::vector<uint16_t> container_offsets;
+    for (const auto container_size : container_sizes)
+    {
+        container_offsets.emplace_back(static_cast<uint16_t>(offset));
+        offset += container_size;
+    }
 
-    EOF1Header header{code_sizes, code_offsets, data_size, {}, {}, types};
+    EOF1Header header{
+        code_sizes, code_offsets, data_size, container_sizes, container_offsets, types};
 
     for (size_t code_idx = 0; code_idx < header.code_sizes.size(); ++code_idx)
     {
