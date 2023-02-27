@@ -241,6 +241,9 @@ evmc_status_code create3(StackTop stack, ExecutionState& state, code_iterator& p
     if (result.status_code == EVMC_SUCCESS)
         stack.top() = intx::be::load<uint256>(result.create_address);
 
+    // TODO check that without this nested creation case is broken
+    state.deploy_container.reset();
+
     pos += 2;
     return EVMC_SUCCESS;
 }
