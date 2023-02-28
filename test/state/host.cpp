@@ -270,14 +270,16 @@ evmc::Result Host::create(const evmc_message& msg) noexcept
                                           evmc::Result{EVMC_FAILURE};
     }
 
-    // TODO can skip validation for CREATE3
-    if (m_rev >= EVMC_CANCUN && (is_eof_container(initcode) || is_eof_container(code)))
+    if (msg.kind != EVMC_CREATE3)
     {
-        if (validate_eof(m_rev, code) != EOFValidationError::success)
+        if (m_rev >= EVMC_CANCUN && (is_eof_container(initcode) || is_eof_container(code)))
+        {
+            if (validate_eof(m_rev, code) != EOFValidationError::success)
+                return evmc::Result{EVMC_CONTRACT_VALIDATION_FAILURE};
+        }
+        else if (m_rev >= EVMC_LONDON && !code.empty() && code[0] == 0xEF)  // Reject EF code.
             return evmc::Result{EVMC_CONTRACT_VALIDATION_FAILURE};
     }
-    else if (m_rev >= EVMC_LONDON && !code.empty() && code[0] == 0xEF)  // Reject EF code.
-        return evmc::Result{EVMC_CONTRACT_VALIDATION_FAILURE};
 
     // TODO: The new_acc pointer is invalid because of the state revert implementation,
     //       but this should change if state journal is implemented.
