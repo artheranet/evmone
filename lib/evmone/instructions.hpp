@@ -976,6 +976,10 @@ inline StopToken returncontract(StackTop stack, ExecutionState& state, code_iter
     const auto& offset = stack[0];
     const auto& size = stack[1];
 
+    // TODO make sure kind is EVMC_CREATE3 for creation transactions
+    if (state.msg->kind != EVMC_CREATE3)
+        return {EVMC_UNDEFINED_INSTRUCTION};
+
     if (!check_memory(state, offset, size))
         return {EVMC_OUT_OF_GAS};
 
