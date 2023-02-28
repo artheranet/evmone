@@ -105,6 +105,7 @@ enum class EOFValidationError
     multiple_container_sections_headers,
     container_section_before_type_section,
     container_section_before_code_section,
+    invalid_container_section_index,
 
     impossible,
 };
