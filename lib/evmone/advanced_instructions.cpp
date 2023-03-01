@@ -216,7 +216,6 @@ const Instruction* op_undefined(const Instruction*, AdvancedExecutionState& stat
     return state.exit(EVMC_UNDEFINED_INSTRUCTION);
 }
 
-
 constexpr std::array<instruction_exec_fn, 256> instruction_implementations = []() noexcept {
     std::array<instruction_exec_fn, 256> table{};
 

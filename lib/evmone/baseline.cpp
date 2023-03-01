@@ -69,8 +69,19 @@ CodeAnalysis analyze_legacy(bytes_view code)
 
 CodeAnalysis analyze_eof1(bytes_view eof_container, const EOF1Header& header)
 {
-    const auto executable_code = eof_container.substr(header.code_begin(), header.code_size);
-    return {executable_code, analyze_jumpdests(executable_code)};
+    auto beg = header.code_begin(0);
+    auto end = header.code_end(header.code_sizes.size() - 1);
+    const auto executable_code = eof_container.substr(beg, end - beg);
+
+    const auto o = header.code_offsets[0];
+    std::vector<uint16_t> offs;
+    for (auto x : header.code_offsets)
+        offs.push_back(x - o);
+
+    // FIXME: Better way of getting EOF version.
+    auto a = CodeAnalysis{executable_code, analyze_jumpdests(executable_code), eof_container[2]};
+    a.code_offsets = std::move(offs);
+    return a;
 }
 }  // namespace
 
@@ -321,7 +332,7 @@ evmc_result execute(const VM& vm, ExecutionState& state, const CodeAnalysis& ana
 
     const auto code = analysis.executable_code;
 
-    const auto& cost_table = get_baseline_cost_table(state.rev);
+    const auto& cost_table = get_baseline_cost_table(state.rev, analysis.eof_version);
 
     auto* tracer = vm.get_tracer();
     if (INTX_UNLIKELY(tracer != nullptr))
