@@ -957,6 +957,13 @@ inline code_iterator retf(StackTop /*stack*/, ExecutionState& state, code_iterat
 template <evmc_status_code StatusCode>
 inline StopToken return_impl(StackTop stack, ExecutionState& state) noexcept
 {
+    // RETURN is forbidden inside CREATE3 context
+    if constexpr (StatusCode == EVMC_SUCCESS)
+    {
+        if (state.msg->kind == EVMC_CREATE3)
+            return {EVMC_UNDEFINED_INSTRUCTION};
+    }
+
     const auto& offset = stack[0];
     const auto& size = stack[1];
 
