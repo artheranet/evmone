@@ -171,13 +171,13 @@ TEST(eof_validation, EOF1_multiple_data_sections)
 
 TEST(eof_validation, EOF1_unknown_section)
 {
-    EXPECT_EQ(validate_eof("EF0001 040001 00 FE"), EOFValidationError::unknown_section_id);
+    EXPECT_EQ(validate_eof("EF0001 050001 00 FE"), EOFValidationError::unknown_section_id);
     EXPECT_EQ(validate_eof("EF0001 FF0001 00 FE"), EOFValidationError::unknown_section_id);
-    EXPECT_EQ(validate_eof("EF0001 010004 0200010001 040001 00 00000000 FE 00"),
+    EXPECT_EQ(validate_eof("EF0001 010004 0200010001 050001 00 00000000 FE 00"),
         EOFValidationError::unknown_section_id);
     EXPECT_EQ(validate_eof("EF0001 010004 0200010001 FF0001 00 00000000 FE 00"),
         EOFValidationError::unknown_section_id);
-    EXPECT_EQ(validate_eof("EF0001 010004 0200010001 030001 040001 00 00000000 FE AA 00"),
+    EXPECT_EQ(validate_eof("EF0001 010004 0200010001 030001 050001 00 00000000 FE AA 00"),
         EOFValidationError::unknown_section_id);
     EXPECT_EQ(validate_eof("EF0001 010004 0200010001 030001 FF0001 00 00000000 FE AA 00"),
         EOFValidationError::unknown_section_id);
@@ -327,7 +327,8 @@ TEST(eof_validation, EOF1_undefined_opcodes)
         // They're all valid in Cancun and checked in other tests below.
         if (opcode >= OP_PUSH1 && opcode <= OP_PUSH32)
             continue;
-        if (opcode == OP_RJUMP || opcode == OP_RJUMPI || opcode == OP_RJUMPV || opcode == OP_CALLF)
+        if (opcode == OP_RJUMP || opcode == OP_RJUMPI || opcode == OP_RJUMPV ||
+            opcode == OP_CALLF || opcode == OP_CREATE3 || opcode == OP_RETURNCONTRACT)
             continue;
         if (opcode == OP_JUMP || opcode == OP_JUMPI || opcode == OP_PC || opcode == OP_CALLCODE ||
             opcode == OP_SELFDESTRUCT)

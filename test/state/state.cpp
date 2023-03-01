@@ -114,6 +114,7 @@ evmc_message build_message(const Transaction& tx, int64_t execution_gas_limit) n
         intx::be::store<evmc::uint256be>(tx.value),
         {},
         recipient,
+        {},
     };
 }
 }  // namespace

@@ -4,6 +4,7 @@
 #pragma once
 
 #include "baseline.hpp"
+#include "eof.hpp"
 #include "execution_state.hpp"
 #include "instructions_traits.hpp"
 #include "instructions_xmacro.hpp"
@@ -935,6 +936,8 @@ evmc_status_code create_impl(StackTop stack, ExecutionState& state) noexcept;
 inline constexpr auto create = create_impl<OP_CREATE>;
 inline constexpr auto create2 = create_impl<OP_CREATE2>;
 
+evmc_status_code create3(StackTop stack, ExecutionState& state, code_iterator& pos) noexcept;
+
 inline code_iterator callf(StackTop /*stack*/, ExecutionState& state, code_iterator pos) noexcept
 {
     const auto index = (size_t{pos[1]} << 8) | pos[2];
@@ -967,6 +970,30 @@ inline StopToken return_impl(StackTop stack, ExecutionState& state) noexcept
 }
 inline constexpr auto return_ = return_impl<EVMC_SUCCESS>;
 inline constexpr auto revert = return_impl<EVMC_REVERT>;
+
+inline StopToken returncontract(StackTop stack, ExecutionState& state, code_iterator pos) noexcept
+{
+    const auto& offset = stack[0];
+    const auto& size = stack[1];
+
+    if (!check_memory(state, offset, size))
+        return {EVMC_OUT_OF_GAS};
+
+    const auto deploy_container_index = size_t{pos[1]};
+
+    const auto header = read_valid_eof1_header(state.original_code);
+    bytes deploy_container{&state.original_code[header.container_begin(deploy_container_index)],
+        header.container_size(deploy_container_index)};
+
+    // Append (offset, size) to data section
+    const auto deploy_header = read_valid_eof1_header(deploy_container);
+    append_data_section(
+        deploy_container, {&state.memory[static_cast<size_t>(offset)], static_cast<size_t>(size)});
+
+    state.deploy_container = std::move(deploy_container);
+
+    return {EVMC_SUCCESS};
+}
 
 inline StopToken selfdestruct(StackTop stack, ExecutionState& state) noexcept
 {

@@ -188,6 +188,63 @@ evmc_status_code create_impl(StackTop stack, ExecutionState& state) noexcept
     return EVMC_SUCCESS;
 }
 
+evmc_status_code create3(StackTop stack, ExecutionState& state, code_iterator& pos) noexcept
+{
+    if (state.in_static_mode())
+        return EVMC_STATIC_MODE_VIOLATION;
+
+    const auto initcontainer_index = uint8_t{pos[1]};
+
+    const auto endowment = stack.pop();
+    const auto input_offset_u256 = stack.pop();
+    const auto input_size_u256 = stack.pop();
+    const auto salt = stack.pop();
+
+    stack.push(0);  // Assume failure.
+    state.return_data.clear();
+    state.deploy_container.reset();
+
+    if (!check_memory(state, input_offset_u256, input_size_u256))
+        return EVMC_OUT_OF_GAS;
+
+    const auto input_offset = static_cast<size_t>(input_offset_u256);
+    const auto input_size = static_cast<size_t>(input_size_u256);
+
+    if (state.msg->depth >= 1024)
+        return EVMC_SUCCESS;  // "Light" failure.
+
+    if (endowment != 0 &&
+        intx::be::load<uint256>(state.host.get_balance(state.msg->recipient)) < endowment)
+        return EVMC_SUCCESS;  // "Light" failure.
+
+    auto msg = evmc_message{};
+    msg.gas = state.gas_left - state.gas_left / 64;
+    msg.kind = EVMC_CREATE3;
+    if (input_size > 0)
+    {
+        // init_code_offset may be garbage if init_code_size == 0.
+        msg.input_data = &state.memory[input_offset];
+        msg.input_size = input_size;
+    }
+
+    msg.sender = state.msg->recipient;
+    msg.depth = state.msg->depth + 1;
+    msg.create2_salt = intx::be::store<evmc::bytes32>(salt);
+    msg.value = intx::be::store<evmc::uint256be>(endowment);
+    msg.initcontainer_index = initcontainer_index;
+
+    const auto result = state.host.call(msg);
+    state.gas_left -= msg.gas - result.gas_left;
+    state.gas_refund += result.gas_refund;
+
+    state.return_data.assign(result.output_data, result.output_size);
+    if (result.status_code == EVMC_SUCCESS)
+        stack.top() = intx::be::load<uint256>(result.create_address);
+
+    pos += 2;
+    return EVMC_SUCCESS;
+}
+
 template evmc_status_code create_impl<OP_CREATE>(StackTop stack, ExecutionState& state) noexcept;
 template evmc_status_code create_impl<OP_CREATE2>(StackTop stack, ExecutionState& state) noexcept;
 }  // namespace evmone::instr::core

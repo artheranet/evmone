@@ -138,6 +138,38 @@ address compute_new_account_address(const address& sender, uint64_t sender_nonce
     return new_addr;
 }
 
+static address compute_new_account_create3_address(
+    const evmc_message& msg, bytes_view initcontainer) noexcept
+{
+    assert(msg.kind == EVMC_CREATE3);
+
+    const auto initcontainer_hash = keccak256(initcontainer);
+    const auto buffer_size = 1 + sizeof(msg.sender) + sizeof(msg.create2_salt) +
+                             sizeof(initcontainer_hash) + msg.input_size;
+    bytes buffer;
+    buffer.reserve(buffer_size);
+    buffer += uint8_t{0xff};
+    buffer += msg.sender.bytes;
+    buffer += msg.create2_salt.bytes;
+    buffer += initcontainer_hash.bytes;
+    buffer += bytes_view{msg.input_data, msg.input_size};
+
+    const auto addr_base_hash = keccak256(buffer);
+
+    evmc_address new_addr{};
+    std::copy_n(&addr_base_hash.bytes[12], sizeof(new_addr), new_addr.bytes);
+    return new_addr;
+}
+
+static bytes_view get_embedded_container(const Account& acc, uint8_t container_idx)
+{
+    const auto& container = acc.code;
+    const auto eof_header = read_valid_eof1_header(container);
+
+    return {&container[eof_header.container_begin(container_idx)],
+        eof_header.container_size(container_idx)};
+}
+
 std::optional<evmc_message> Host::prepare_message(evmc_message msg)
 {
     auto& sender_acc = m_state.get(msg.sender);
@@ -151,14 +183,24 @@ std::optional<evmc_message> Host::prepare_message(evmc_message msg)
         ++sender_acc.nonce;
     }
 
-    if (msg.kind == EVMC_CREATE || msg.kind == EVMC_CREATE2)
+    if (msg.kind == EVMC_CREATE || msg.kind == EVMC_CREATE2 || msg.kind == EVMC_CREATE3)
     {
         // Compute and fill create address.
         assert(msg.recipient == address{});
         assert(msg.code_address == address{});
-        msg.recipient = compute_new_account_address(msg.sender, sender_nonce,
-            (msg.kind == EVMC_CREATE2) ? std::optional{msg.create2_salt} : std::nullopt,
-            {msg.input_data, msg.input_size});
+        if (msg.kind == EVMC_CREATE3)
+        {
+            const Account& acc = m_state.get(msg.sender);
+            bytes_view initcontainer = get_embedded_container(acc, msg.initcontainer_index);
+
+            msg.recipient = compute_new_account_create3_address(msg, initcontainer);
+        }
+        else
+        {
+            msg.recipient = compute_new_account_address(msg.sender, sender_nonce,
+                (msg.kind == EVMC_CREATE2) ? std::optional{msg.create2_salt} : std::nullopt,
+                {msg.input_data, msg.input_size});
+        }
 
         // By EIP-2929, the  access to new created address is never reverted.
         access_account(msg.recipient);
@@ -169,7 +211,7 @@ std::optional<evmc_message> Host::prepare_message(evmc_message msg)
 
 evmc::Result Host::create(const evmc_message& msg) noexcept
 {
-    assert(msg.kind == EVMC_CREATE || msg.kind == EVMC_CREATE2);
+    assert(msg.kind == EVMC_CREATE || msg.kind == EVMC_CREATE2 || msg.kind == EVMC_CREATE3);
 
     // Check collision as defined in pseudo-EIP https://github.com/ethereum/EIPs/issues/684.
     // All combinations of conditions (nonce, code, storage) are tested.
@@ -185,8 +227,8 @@ evmc::Result Host::create(const evmc_message& msg) noexcept
 
     // Clear the new account storage, but keep the access status (from tx access list).
     // This is only needed for tests and cannot happen in real networks.
-    for (auto& [_, v] : new_acc.storage)
-        [[unlikely]] v = StorageValue{.access_status = v.access_status};
+    for (auto& [_, v] : new_acc.storage) [[unlikely]]
+        v = StorageValue{.access_status = v.access_status};
 
     auto& sender_acc = m_state.get(msg.sender);  // TODO: Duplicated account lookup.
     const auto value = intx::be::load<intx::uint256>(msg.value);
@@ -195,11 +237,17 @@ evmc::Result Host::create(const evmc_message& msg) noexcept
     new_acc.balance += value;  // The new account may be prefunded.
 
     auto create_msg = msg;
-    const bytes_view initcode{msg.input_data, msg.input_size};
-    create_msg.input_data = nullptr;
-    create_msg.input_size = 0;
+    const auto initcode =
+        (msg.kind == EVMC_CREATE3 ?
+                get_embedded_container(m_state.get(msg.sender), msg.initcontainer_index) :
+                bytes_view{msg.input_data, msg.input_size});
+    if (msg.kind != EVMC_CREATE3)
+    {
+        create_msg.input_data = nullptr;
+        create_msg.input_size = 0;
+    }
 
-    auto result = m_vm.execute(*this, m_rev, create_msg, msg.input_data, msg.input_size);
+    auto result = m_vm.execute(*this, m_rev, create_msg, initcode.data(), initcode.size());
     if (result.status_code != EVMC_SUCCESS)
     {
         result.create_address = msg.recipient;
@@ -222,6 +270,7 @@ evmc::Result Host::create(const evmc_message& msg) noexcept
                                           evmc::Result{EVMC_FAILURE};
     }
 
+    // TODO can skip validation for CREATE3
     if (m_rev >= EVMC_CANCUN && (is_eof_container(initcode) || is_eof_container(code)))
     {
         if (validate_eof(m_rev, code) != EOFValidationError::success)
@@ -239,7 +288,7 @@ evmc::Result Host::create(const evmc_message& msg) noexcept
 
 evmc::Result Host::execute_message(const evmc_message& msg) noexcept
 {
-    if (msg.kind == EVMC_CREATE || msg.kind == EVMC_CREATE2)
+    if (msg.kind == EVMC_CREATE || msg.kind == EVMC_CREATE2 || msg.kind == EVMC_CREATE3)
         return create(msg);
 
     assert(msg.kind != EVMC_CALL || evmc::address{msg.recipient} == msg.code_address);

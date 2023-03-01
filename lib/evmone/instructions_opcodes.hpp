@@ -169,6 +169,8 @@ enum Opcode : uint8_t
     OP_RETURN = 0xf3,
     OP_DELEGATECALL = 0xf4,
     OP_CREATE2 = 0xf5,
+    OP_CREATE3 = 0xf6,
+    OP_RETURNCONTRACT = 0xf7,
 
     OP_STATICCALL = 0xfa,
 

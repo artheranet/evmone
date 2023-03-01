@@ -4,6 +4,7 @@
 
 #include "eof.hpp"
 #include "baseline_instruction_table.hpp"
+#include "execution_state.hpp"
 #include "instructions_traits.hpp"
 
 #include <algorithm>
@@ -24,7 +25,8 @@ constexpr uint8_t TERMINATOR = 0x00;
 constexpr uint8_t TYPE_SECTION = 0x01;
 constexpr uint8_t CODE_SECTION = 0x02;
 constexpr uint8_t DATA_SECTION = 0x03;
-constexpr uint8_t MAX_SECTION = DATA_SECTION;
+constexpr uint8_t CONTAINER_SECTION = 0x04;
+constexpr uint8_t MAX_SECTION = CONTAINER_SECTION;
 constexpr auto CODE_SECTION_NUMBER_LIMIT = 1024;
 constexpr auto MAX_STACK_HEIGHT = 0x0400;
 constexpr auto OUTPUTS_INPUTS_NUMBER_LIMIT = 0x7F;
@@ -35,13 +37,21 @@ size_t eof_header_size(const EOFSectionHeaders& headers) noexcept
 {
     const auto non_code_section_count = headers[TYPE_SECTION].size() + headers[DATA_SECTION].size();
     const auto code_section_count = headers[CODE_SECTION].size();
+    const auto container_section_count = headers[CONTAINER_SECTION].size();
 
     constexpr auto non_code_section_header_size = 3;  // (SECTION_ID + SIZE) per each section
-    constexpr auto code_section_size_size = 2;
+    constexpr auto section_size_size = 2;
 
-    return sizeof(MAGIC) + 1 +  // 1 version byte
-           non_code_section_count * non_code_section_header_size + sizeof(CODE_SECTION) + 2 +
-           code_section_count * code_section_size_size + sizeof(TERMINATOR);
+    auto header_size = sizeof(MAGIC) + 1 +  // 1 version byte
+                       non_code_section_count * non_code_section_header_size +
+                       sizeof(CODE_SECTION) + 2 + code_section_count * section_size_size +
+                       sizeof(TERMINATOR);
+
+    if (container_section_count != 0)
+    {
+        header_size += sizeof(CONTAINER_SECTION) + 2 + container_section_count * section_size_size;
+    }
+    return header_size;
 }
 
 std::variant<EOFSectionHeaders, EOFValidationError> validate_eof_headers(bytes_view container)
@@ -115,6 +125,27 @@ std::variant<EOFSectionHeaders, EOFValidationError> validate_eof_headers(bytes_v
                 state = State::section_size;
                 break;
             }
+            case CONTAINER_SECTION:
+            {
+                // TODO validation of order of sections
+                if (section_headers[TYPE_SECTION].empty())
+                    return EOFValidationError::container_section_before_type_section;
+                if (section_headers[CODE_SECTION].empty())
+                    return EOFValidationError::container_section_before_code_section;
+                if (!section_headers[CONTAINER_SECTION].empty())
+                    return EOFValidationError::multiple_container_sections_headers;
+                if (it == container_end)
+                    return EOFValidationError::incomplete_section_number;
+                const auto section_number_hi = *it++;
+                if (it == container_end)
+                    return EOFValidationError::incomplete_section_number;
+                const auto section_number_lo = *it++;
+                section_num = static_cast<uint16_t>((section_number_hi << 8) | section_number_lo);
+                if (section_num == 0)
+                    return EOFValidationError::zero_section_size;
+                state = State::section_size;
+                break;
+            }
             default:
                 return EOFValidationError::unknown_section_id;
             }
@@ -122,7 +153,7 @@ std::variant<EOFSectionHeaders, EOFValidationError> validate_eof_headers(bytes_v
         }
         case State::section_size:
         {
-            if (section_id == CODE_SECTION)
+            if (section_id == CODE_SECTION || section_id == CONTAINER_SECTION)
             {
                 assert(section_num > 0);  // Guaranteed by previous validation step.
                 for (size_t i = 0; i < section_num; ++i)
@@ -170,7 +201,9 @@ std::variant<EOFSectionHeaders, EOFValidationError> validate_eof_headers(bytes_v
         (!section_headers[TYPE_SECTION].empty() ? section_headers[TYPE_SECTION].front() : 0) +
         std::accumulate(
             section_headers[CODE_SECTION].begin(), section_headers[CODE_SECTION].end(), 0) +
-        (!section_headers[DATA_SECTION].empty() ? section_headers[DATA_SECTION].front() : 0);
+        (!section_headers[DATA_SECTION].empty() ? section_headers[DATA_SECTION].front() : 0) +
+        std::accumulate(section_headers[CONTAINER_SECTION].begin(),
+            section_headers[CONTAINER_SECTION].end(), 0);
     const auto remaining_container_size = container_end - it;
     if (section_bodies_size != remaining_container_size)
         return EOFValidationError::invalid_section_bodies_size;
@@ -475,7 +508,9 @@ std::variant<EOF1Header, EOFValidationError> validate_eof1(
         offset += code_size;
     }
 
-    EOF1Header header{code_sizes, code_offsets, data_size, types};
+    // TODO calculate container offsets and add to EOF1Header
+
+    EOF1Header header{code_sizes, code_offsets, data_size, {}, {}, types};
 
     for (size_t code_idx = 0; code_idx < header.code_sizes.size(); ++code_idx)
     {
@@ -496,6 +531,8 @@ std::variant<EOF1Header, EOFValidationError> validate_eof1(
             return EOFValidationError::invalid_max_stack_height;
     }
 
+    // TODO recursively validate embedded container section
+
     return header;
 }
 
@@ -514,6 +551,25 @@ size_t EOF1Header::code_end(size_t index) const noexcept
     return size_t{code_offsets[index]} + code_sizes[index];
 }
 
+size_t EOF1Header::container_begin(size_t index) const noexcept
+{
+    assert(index < container_offsets.size());
+    return container_offsets[index];
+}
+
+size_t EOF1Header::container_end(size_t index) const noexcept
+{
+    assert(index < container_offsets.size());
+    assert(index < container_sizes.size());
+    return size_t{container_offsets[index]} + container_sizes[index];
+}
+
+size_t EOF1Header::container_size(size_t index) const noexcept
+{
+    assert(index < container_sizes.size());
+    return container_sizes[index];
+}
+
 bool is_eof_container(bytes_view container) noexcept
 {
     return container.size() > 1 && container[0] == MAGIC[0] && container[1] == MAGIC[1];
@@ -526,7 +582,7 @@ EOF1Header read_valid_eof1_header(bytes_view container)
     while (*it != TERMINATOR)
     {
         const auto section_id = *it++;
-        if (section_id == CODE_SECTION)
+        if (section_id == CODE_SECTION || section_id == CONTAINER_SECTION)
         {
             const auto code_section_num_hi = *it++;
             const auto code_section_num_lo = *it++;
@@ -579,7 +635,32 @@ EOF1Header read_valid_eof1_header(bytes_view container)
     header.data_size =
         section_headers[DATA_SECTION].empty() ? uint16_t{0} : section_headers[DATA_SECTION][0];
 
+    header.container_sizes = section_headers[CONTAINER_SECTION];
+    std::vector<uint16_t> container_offsets;
+    auto container_offset = code_offset + header.data_size;
+    for (const auto container_size : header.container_sizes)
+    {
+        header.container_offsets.emplace_back(static_cast<uint16_t>(container_offset));
+        container_offset += container_size;
+    }
+
     return header;
+}
+
+void append_data_section(bytes& container, bytes_view aux_data)
+{
+    const auto header = read_valid_eof1_header(container);
+    const auto insert_pos =
+        header.container_offsets.empty() ? container.size() : header.container_begin(0);
+    container.insert(insert_pos, aux_data);
+    const auto new_data_size = header.data_size + aux_data.size();
+
+    // find data size position
+    const auto num_code_sections = header.code_sizes.size();
+    const auto data_size_pos = std::size(MAGIC) + 1 + 3 + 3 + 2 * num_code_sections + 1;
+    // Update data size
+    container[data_size_pos] = static_cast<uint8_t>(new_data_size >> 8);
+    container[data_size_pos + 1] = static_cast<uint8_t>(new_data_size);
 }
 
 uint8_t get_eof_version(bytes_view container) noexcept
@@ -687,6 +768,12 @@ std::string_view get_error_message(EOFValidationError err) noexcept
         return "stack_underflow";
     case EOFValidationError::invalid_code_section_index:
         return "invalid_code_section_index";
+    case EOFValidationError::multiple_container_sections_headers:
+        return "multiple_container_sections_headers";
+    case EOFValidationError::container_section_before_type_section:
+        return "container_section_before_type_section";
+    case EOFValidationError::container_section_before_code_section:
+        return "container_section_before_code_section";
     case EOFValidationError::impossible:
         return "impossible";
     }
